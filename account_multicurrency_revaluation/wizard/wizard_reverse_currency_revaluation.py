@@ -1,4 +1,4 @@
-from odoo import _, api, exceptions, fields, models
+from odoo import api, exceptions, fields, models
 
 
 class WizardCurrencyRevaluation(models.TransientModel):
@@ -78,8 +78,8 @@ class WizardCurrencyRevaluation(models.TransientModel):
         if created_entries:
             return {
                 "domain": [("id", "in", created_entries.ids)],
-                "name": _("Reverse Revaluation Entries"),
-                "view_mode": "tree,form",
+                "name": self.env._("Reverse Revaluation Entries"),
+                "view_mode": "list,form",
                 "auto_search": True,
                 "res_model": "account.move",
                 "view_id": False,
@@ -87,4 +87,4 @@ class WizardCurrencyRevaluation(models.TransientModel):
                 "type": "ir.actions.act_window",
             }
         else:
-            raise exceptions.Warning(_("No accounting entry has been posted."))
+            raise exceptions.Warning(self.env._("No accounting entry has been posted."))

@@ -1,4 +1,4 @@
-from odoo import _, api, exceptions, fields, models
+from odoo import api, exceptions, fields, models
 from odoo.tools import float_repr
 
 
@@ -34,7 +34,7 @@ class WizardCurrencyRevaluation(models.TransientModel):
             [
                 ("include_initial_balance", "=", True),
                 ("currency_revaluation", "=", True),
-                ("company_id", "=", company.id),
+                ("company_ids", "=", company.id),
             ]
         )
 
@@ -69,7 +69,7 @@ class WizardCurrencyRevaluation(models.TransientModel):
         help="Accounts that will be revaluated.",
         required=True,
         default=lambda self: self._get_default_revaluation_account_ids(),
-        domain=lambda self: [("company_id", "=", self.env.company.id)],
+        domain=lambda self: [("company_ids", "=", self.env.company.id)],
     )
 
     def _create_move_and_lines(
@@ -188,9 +188,9 @@ class WizardCurrencyRevaluation(models.TransientModel):
     @api.model
     def _format_balance_adjustment_label(self, fmt, account, currency, rate):
         return fmt % {
-            "account": account.code or _("N/A"),
-            "account_name": account.name or _("N/A"),
-            "currency": currency.name or _("N/A"),
+            "account": account.code or self.env._("N/A"),
+            "account_name": account.name or self.env._("N/A"),
+            "currency": currency.name or self.env._("N/A"),
             "rate": float_repr(rate, 6),
         }
 
@@ -302,7 +302,7 @@ class WizardCurrencyRevaluation(models.TransientModel):
         company = self.journal_id.company_id or self.env.company
         if not self._validate_company_revaluation_configuration(company):
             raise exceptions.UserError(
-                _(
+                self.env._(
                     "No revaluation or provision account are defined"
                     " for your company.\n"
                     "You must specify at least one provision account or"
@@ -314,17 +314,15 @@ class WizardCurrencyRevaluation(models.TransientModel):
 
         if not account_ids:
             raise exceptions.UserError(
-                _(
+                self.env._(
                     "No account to be revaluated found. "
                     "Please check 'Allow Currency Revaluation' "
                     "for at least one account in account form."
                 )
             )
-
         revaluations = account_ids.compute_revaluations(
             self.revaluation_date, self.start_date
         )
-
         for account_id, by_account in revaluations.items():
             account = Account.browse(account_id)
             if account.account_type in ["asset_cash", "liability_credit_card"] and (
@@ -373,8 +371,8 @@ class WizardCurrencyRevaluation(models.TransientModel):
         if created_ids:
             return {
                 "domain": [("id", "in", created_ids)],
-                "name": _("Created Revaluation Lines"),
-                "view_mode": "tree,form",
+                "name": self.env._("Created Revaluation Lines"),
+                "view_mode": "list,form",
                 "auto_search": True,
                 "res_model": "account.move.line",
                 "view_id": False,
@@ -382,4 +380,6 @@ class WizardCurrencyRevaluation(models.TransientModel):
                 "type": "ir.actions.act_window",
             }
         else:
-            raise exceptions.UserError(_("No accounting entry has been posted."))
+            raise exceptions.UserError(
+                self.env._("No accounting entry has been posted.")
+            )
