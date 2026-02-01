@@ -1,5 +1,6 @@
-from odoo import _, api, fields, models
+from odoo import api, fields, models
 from odoo.exceptions import UserError
+from odoo.tools import SQL
 
 
 class AccountAccount(models.Model):
@@ -40,15 +41,15 @@ class AccountAccount(models.Model):
             and any([not x for x in self.mapped("include_initial_balance")])
         ):
             raise UserError(
-                _(
+                self.env._(
                     "There is an account that you are editing not having the Bring "
                     "Balance Forward set, the currency revaluation cannot be applied "
-                    "on these accounts: \n\t - %s"
-                )
-                % "\n\t - ".join(
-                    self.filtered(lambda x: not x.include_initial_balance).mapped(
-                        "name"
-                    )
+                    "on these accounts: \n\t - %(balance)s",
+                    balance="\n\t - ".join(
+                        self.filtered(lambda x: not x.include_initial_balance).mapped(
+                            "name"
+                        )
+                    ),
                 )
             )
         return super().write(vals)
@@ -71,110 +72,97 @@ class AccountAccount(models.Model):
                 rec.currency_revaluation = False
 
     def _revaluation_query(self, revaluation_date, start_date=None):
-        query = self.env["account.move.line"]._where_calc(
+        query = self.env["account.move.line"]._search(
             [
                 ("company_id", "in", self.env.companies.ids),
                 ("display_type", "not in", ("line_section", "line_note")),
                 ("parent_state", "!=", "cancel"),
             ]
         )
-        self.env["account.move.line"]._apply_ir_rules(query)
-        tables, where_clause, where_clause_params = query.get_sql()
-        mapping = [
-            ('"account_move_line".', "aml."),
-            ('"account_move_line"', "account_move_line aml"),
-            ("LEFT JOIN", "\n    LEFT JOIN"),
-            (")) AND", "))\n" + " " * 12 + "AND"),
-        ]
-        for s_from, s_to in mapping:
-            tables = tables.replace(s_from, s_to)
-            where_clause = where_clause.replace(s_from, s_to)
-        where_clause = ("\n" + " " * 8 + "AND " + where_clause) if where_clause else ""
-        query = (
+        from_clause = query.from_clause
+        where_clause = query.where_clause
+
+        aml = SQL.identifier("account_move_line")
+
+        select_mapping = SQL(", ").join(SQL(v) for v in self._sql_mapping.values())
+
+        full_query = SQL(
             """
 WITH amount AS (
     SELECT
-        aml.account_id,
+        %(aml)s.account_id,
         CASE WHEN acc.account_type IN ('liability_payable', 'asset_receivable')
-            THEN aml.partner_id
+            THEN %(aml)s.partner_id
             ELSE NULL
         END AS partner_id,
-        aml.currency_id,
-        aml.debit,
-        aml.credit,
-        aml.amount_currency,
-        aml.id as origin_aml_id
-    FROM """
-            + tables
-            + """
-    LEFT JOIN account_move am ON aml.move_id = am.id
-    INNER JOIN account_account acc ON aml.account_id = acc.id
+        %(aml)s.currency_id,
+        %(aml)s.debit,
+        %(aml)s.credit,
+        %(aml)s.amount_currency,
+        %(aml)s.id as origin_aml_id
+    FROM %(from_clause)s
+    LEFT JOIN account_move am ON %(aml)s.move_id = am.id
+    INNER JOIN account_account acc ON %(aml)s.account_id = acc.id
     LEFT JOIN account_partial_reconcile aprc
-        ON (aml.balance < 0 AND aml.id = aprc.credit_move_id)
+        ON (%(aml)s.balance < 0 AND %(aml)s.id = aprc.credit_move_id)
     LEFT JOIN account_move_line amlcf
         ON (
-            aml.balance < 0
+            %(aml)s.balance < 0
             AND aprc.debit_move_id = amlcf.id
-            AND amlcf.date < %s
+            AND amlcf.date < %(reval_date)s
         )
     LEFT JOIN account_partial_reconcile aprd
-        ON (aml.balance > 0 AND aml.id = aprd.debit_move_id)
+        ON (%(aml)s.balance > 0 AND %(aml)s.id = aprd.debit_move_id)
     LEFT JOIN account_move_line amldf
         ON (
-            aml.balance > 0
+            %(aml)s.balance > 0
             AND aprd.credit_move_id = amldf.id
-            AND amldf.date < %s
+            AND amldf.date < %(reval_date)s
         )
     WHERE
-        aml.account_id IN %s
-        AND aml.date <= %s
-        """
-            + (("AND aml.date >= %s") if start_date else "")
-            + """
-        AND aml.currency_id IS NOT NULL
+        %(aml)s.account_id IN %(account_ids)s
+        AND %(aml)s.date <= %(reval_date)s
+        %(date_filter)s
+        AND %(aml)s.currency_id IS NOT NULL
         AND am.state = 'posted'
-        AND aml.balance <> 0
-        """
-            + where_clause
-            + """
+        AND %(aml)s.balance <> 0
+        AND %(where_clause)s
     GROUP BY
         acc.account_type,
         origin_aml_id
     HAVING
-        aml.amount_residual_currency <> 0
+        %(aml)s.amount_residual_currency <> 0
 )
 SELECT
     account_id as id,
     origin_aml_id,
     partner_id,
-    currency_id,"""
-            + ", ".join(self._sql_mapping.values())
-            + """
+    currency_id,
+    %(select_mapping)s
 FROM amount
 GROUP BY
     account_id,
     origin_aml_id,
     currency_id,
     partner_id
-ORDER BY account_id, partner_id, currency_id"""
+ORDER BY account_id, partner_id, currency_id
+            """,
+            aml=aml,
+            from_clause=from_clause,
+            where_clause=where_clause,
+            reval_date=revaluation_date,
+            account_ids=tuple(self.ids),
+            date_filter=SQL("AND %s.date >= %s", aml, start_date)
+            if start_date
+            else SQL(""),
+            select_mapping=select_mapping,
         )
 
-        params = [
-            revaluation_date,
-            revaluation_date,
-            tuple(self.ids),
-            revaluation_date,
-            *where_clause_params,
-        ]
-        if start_date:
-            # Insert the value after the revaluation date parameter
-            params.insert(4, start_date)
-
-        return query, params
+        return full_query
 
     def compute_revaluations(self, revaluation_date, start_date=None):
-        query, params = self._revaluation_query(revaluation_date, start_date)
-        self.env.cr.execute(query, params)
+        full_query = self._revaluation_query(revaluation_date, start_date)
+        self.env.cr.execute(full_query)
         lines = self.env.cr.dictfetchall()
 
         data = {}

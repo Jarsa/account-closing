@@ -14,11 +14,6 @@ class AccountConfigSettings(models.TransientModel):
         related="company_id.revaluation_gain_account_id",
         readonly=False,
     )
-    revaluation_analytic_account_id = fields.Many2one(
-        comodel_name="account.analytic.account",
-        related="company_id.revaluation_analytic_account_id",
-        readonly=False,
-    )
     provision_bs_loss_account_id = fields.Many2one(
         comodel_name="account.account",
         related="company_id.provision_bs_loss_account_id",
