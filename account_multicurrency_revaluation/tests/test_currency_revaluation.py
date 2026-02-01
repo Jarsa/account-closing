@@ -933,7 +933,6 @@ class TestCurrencyRevaluation(common.TransactionCase):
     def update_company(self, with_analytic=False, **options):
         if with_analytic:
             for field, xml_id in [
-                ("revaluation_analytic_account_id", "acc_analytic"),
                 ("provision_pl_analytic_account_id", "acc_analytic"),
                 ("provision_bs_gain_account_id", "acc_prov_bs_gain"),
                 ("provision_pl_gain_account_id", "acc_prov_pl_gain"),

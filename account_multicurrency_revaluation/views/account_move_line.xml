@@ -9,12 +9,6 @@
         <field name="arch" type="xml">
             <field name="company_id" position="before">
                 <div class="oe_button_box" name="button_box">
-                    <t
-                        groups="account_multicurrency_revaluation.group_revaluation_additional"
-                    >
-                        <field name="revaluation_origin_line_ids" invisible="True" />
-                        <field name="revaluation_created_line_id" invisible="True" />
-                    </t>
                     <button
                         name="action_view_revaluation_origin_lines"
                         type="object"

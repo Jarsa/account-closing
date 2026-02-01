@@ -59,14 +59,6 @@
                                 />
                                 <field name="revaluation_gain_account_id" />
                             </div>
-                            <div class="row mt16">
-                                <label
-                                    for="revaluation_analytic_account_id"
-                                    string="Analytic Account"
-                                    class="col-lg-3 o_light_label"
-                                />
-                                <field name="revaluation_analytic_account_id" />
-                            </div>
                         </div>
                     </setting>
                     <setting
