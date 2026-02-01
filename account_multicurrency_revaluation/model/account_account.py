@@ -212,9 +212,9 @@ ORDER BY account_id, partner_id, currency_id"""
                 )
             existing_line = data[account_id][partner_id][currency_id]
             if existing_line:
-                data[account_id][partner_id][
-                    currency_id
-                ] = self._merge_currency_revaluation_lines(existing_line, line)
+                data[account_id][partner_id][currency_id] = (
+                    self._merge_currency_revaluation_lines(existing_line, line)
+                )
             else:
                 # Convert origin account move lines to list as there can be multiple
                 line["origin_aml_id"] = [line["origin_aml_id"]]
