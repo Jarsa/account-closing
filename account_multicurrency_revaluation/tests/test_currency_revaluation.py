@@ -15,12 +15,6 @@ class TestCurrencyRevaluation(common.TransactionCase):
         cls.company = cls.env.ref(f"{CURRENT_MODULE}.res_company_reval")
         cls.env.user.write({"company_ids": [Command.link(cls.company.id)]})
         cls.env.user.company_id = cls.company
-        cls.company.account_journal_payment_debit_account_id = cls.env.ref(
-            f"{CURRENT_MODULE}.demo_acc_liquidity_eur"
-        ).id
-        cls.company.account_journal_payment_credit_account_id = cls.env.ref(
-            f"{CURRENT_MODULE}.demo_acc_liquidity_eur"
-        ).id
         cls.reval_journal = cls.env.ref(f"{CURRENT_MODULE}.reval_journal")
         cls.company.write(
             {
@@ -47,7 +41,7 @@ class TestCurrencyRevaluation(common.TransactionCase):
                 "account_type": "asset_receivable",
                 "currency_revaluation": True,
                 "reconcile": True,
-                "company_id": cls.company.id,
+                "company_ids": [Command.set([cls.company.id])],
             }
         )
         payable_acc = cls.env.ref(f"{CURRENT_MODULE}.demo_acc_payable")
@@ -279,24 +273,22 @@ class TestCurrencyRevaluation(common.TransactionCase):
             }
         )
         eur_bank.default_account_id.currency_revaluation = True
-        payment_method = self.env.ref("account.account_payment_method_manual_in")
+        liquidity_eur = self.env.ref(f"{CURRENT_MODULE}.demo_acc_liquidity_eur")
+        eur_bank.inbound_payment_method_line_ids.payment_account_id = liquidity_eur
+        eur_bank.outbound_payment_method_line_ids.payment_account_id = liquidity_eur
 
-        # Register partial payment
-        payment = self.env["account.payment"].create(
+        # Register partial payment using payment.register to ensure AML reconciliation
+        self.env["account.payment.register"].with_context(
+            active_ids=invoice.ids,
+            active_model="account.move",
+        ).create(
             {
-                "reconciled_invoice_ids": [(4, invoice.id, 0)],
                 "amount": 4000,
                 "currency_id": eur_currency.id,
-                "date": self.today - timedelta(days=79),
-                "ref": "Invoice partial payment",
-                "partner_id": invoice.partner_id.id,
-                "partner_type": "customer",
+                "payment_date": self.today - timedelta(days=79),
                 "journal_id": eur_bank.id,
-                "payment_type": "inbound",
-                "payment_method_id": payment_method.id,
             }
-        )
-        payment.action_post()
+        ).action_create_payments()
 
         result = self.wizard_execute(self.today - timedelta(days=70))
         self.assertEqual(result.get("name"), "Created Revaluation Lines")
@@ -333,13 +325,15 @@ class TestCurrencyRevaluation(common.TransactionCase):
             }
         )
         eur_bank.default_account_id.currency_revaluation = True
+        eur_bank.default_account_id.reconcile = True
         bank_account = eur_bank.default_account_id
         liability_account = self.env["account.account"].create(
             {
                 "name": "Liability",
                 "code": "L",
                 "account_type": "liability_current",
-                "company_id": self.company.id,
+                "reconcile": True,
+                "company_ids": [Command.set([self.company.id])],
             }
         )
         eur_bank.inbound_payment_method_line_ids.payment_account_id = (
@@ -372,27 +366,24 @@ class TestCurrencyRevaluation(common.TransactionCase):
                 "amount": 100.0,
                 "currency_id": eur_currency.id,
                 "date": self.today - timedelta(days=90),
-                "ref": "Incoming 100 EUR",
+                "memo": "Incoming 100 EUR",
                 "partner_id": self.partner.id,
                 "partner_type": "customer",
                 "journal_id": eur_bank.id,
                 "payment_type": "inbound",
             }
         )
-        (
-            liquidity_lines,
-            counterpart_lines,
-            writeoff_lines,
-        ) = payment_stmt_line_1._seek_for_lines()
         payment_stmt_line_1.action_post()
-
+        bank_liq_line = payment_stmt_line_1.move_id.line_ids.filtered(
+            lambda line: line.account_id == payment_stmt_line_1.outstanding_account_id
+        )
         (
             _st_liquidity_lines,
             st_suspense_lines,
             _st_other_lines,
         ) = bank_stmt_line_1._seek_for_lines()
-        st_suspense_lines.account_id = liquidity_lines.account_id
-        (st_suspense_lines + liquidity_lines).reconcile()
+        st_suspense_lines.account_id = bank_liq_line.account_id
+        (st_suspense_lines + bank_liq_line).reconcile()
 
         bank_stmt = self.env["account.bank.statement"].create(
             {
@@ -452,27 +443,24 @@ class TestCurrencyRevaluation(common.TransactionCase):
                 "amount": 50.0,
                 "currency_id": eur_currency.id,
                 "date": self.today - timedelta(days=69),
-                "ref": "Incoming 50 EUR",
+                "memo": "Incoming 50 EUR",
                 "partner_id": self.partner.id,
                 "partner_type": "customer",
                 "journal_id": eur_bank.id,
                 "payment_type": "inbound",
             }
         )
-        (
-            liquidity_lines,
-            counterpart_lines,
-            writeoff_lines,
-        ) = payment_line_3._seek_for_lines()
         payment_line_3.action_post()
-
+        bank_liq_line = payment_line_3.move_id.line_ids.filtered(
+            lambda line: line.account_id == payment_line_3.outstanding_account_id
+        )
         (
             _st_liquidity_lines,
             st_suspense_lines,
             _st_other_lines,
         ) = bank_stmt_line_3._seek_for_lines()
-        st_suspense_lines.account_id = liquidity_lines.account_id
-        (st_suspense_lines + liquidity_lines).reconcile()
+        st_suspense_lines.account_id = bank_liq_line.account_id
+        (st_suspense_lines + bank_liq_line).reconcile()
 
         bank_account_lines = self.env["account.move.line"].search(
             [("account_id", "=", bank_account.id)]
@@ -525,13 +513,15 @@ class TestCurrencyRevaluation(common.TransactionCase):
             }
         )
         usd_bank.default_account_id.currency_revaluation = True
+        usd_bank.default_account_id.reconcile = True
         bank_account = usd_bank.default_account_id
         liability_account = self.env["account.account"].create(
             {
                 "name": "Liability",
                 "code": "L",
                 "account_type": "liability_current",
-                "company_id": self.company.id,
+                "reconcile": True,
+                "company_ids": [Command.set([self.company.id])],
             }
         )
         usd_bank.inbound_payment_method_line_ids.payment_account_id = (
@@ -565,27 +555,24 @@ class TestCurrencyRevaluation(common.TransactionCase):
                 "amount": 100.0,
                 "currency_id": usd_currency.id,
                 "date": "2020-11-10",
-                "ref": "Incoming 100 USD",
+                "memo": "Incoming 100 USD",
                 "partner_id": self.partner.id,
                 "partner_type": "customer",
                 "journal_id": usd_bank.id,
                 "payment_type": "inbound",
             }
         )
-        (
-            liquidity_lines,
-            counterpart_lines,
-            writeoff_lines,
-        ) = payment_line_1._seek_for_lines()
         payment_line_1.action_post()
-
+        bank_liq_line = payment_line_1.move_id.line_ids.filtered(
+            lambda line: line.account_id == payment_line_1.outstanding_account_id
+        )
         (
             _st_liquidity_lines,
             st_suspense_lines,
             _st_other_lines,
         ) = bank_stmt_line_1._seek_for_lines()
-        st_suspense_lines.account_id = liquidity_lines.account_id
-        (st_suspense_lines + liquidity_lines).reconcile()
+        st_suspense_lines.account_id = bank_liq_line.account_id
+        (st_suspense_lines + bank_liq_line).reconcile()
 
         bank_stmt = self.env["account.bank.statement"].create(
             {
@@ -646,27 +633,24 @@ class TestCurrencyRevaluation(common.TransactionCase):
                 "amount": 50.0,
                 "currency_id": usd_currency.id,
                 "date": self.today - timedelta(days=69),
-                "ref": "Incoming 50 USD",
+                "memo": "Incoming 50 USD",
                 "partner_id": self.partner.id,
                 "partner_type": "customer",
                 "journal_id": usd_bank.id,
                 "payment_type": "inbound",
             }
         )
-        (
-            liquidity_lines,
-            counterpart_lines,
-            writeoff_lines,
-        ) = payment_line_3._seek_for_lines()
         payment_line_3.action_post()
-
+        bank_liq_line = payment_line_3.move_id.line_ids.filtered(
+            lambda line: line.account_id == payment_line_3.outstanding_account_id
+        )
         (
             _st_liquidity_lines,
             st_suspense_lines,
             _st_other_lines,
         ) = bank_stmt_line_3._seek_for_lines()
-        st_suspense_lines.account_id = liquidity_lines.account_id
-        (st_suspense_lines + liquidity_lines).reconcile()
+        st_suspense_lines.account_id = bank_liq_line.account_id
+        (st_suspense_lines + bank_liq_line).reconcile()
 
         bank_stmt_line_4 = self.env["account.bank.statement.line"].create(
             {
@@ -686,27 +670,24 @@ class TestCurrencyRevaluation(common.TransactionCase):
                 "amount": 50.0,
                 "currency_id": eur_currency.id,
                 "date": self.today - timedelta(days=69),
-                "ref": "Incoming 50 EUR",
+                "memo": "Incoming 50 EUR",
                 "partner_id": self.partner.id,
                 "partner_type": "customer",
                 "journal_id": usd_bank.id,
                 "payment_type": "inbound",
             }
         )
-        (
-            liquidity_lines,
-            counterpart_lines,
-            writeoff_lines,
-        ) = payment_line_4._seek_for_lines()
         payment_line_4.action_post()
-
+        bank_liq_line = payment_line_4.move_id.line_ids.filtered(
+            lambda line: line.account_id == payment_line_4.outstanding_account_id
+        )
         (
             _st_liquidity_lines,
             st_suspense_lines,
             _st_other_lines,
         ) = bank_stmt_line_4._seek_for_lines()
-        st_suspense_lines.account_id = liquidity_lines.account_id
-        (st_suspense_lines + liquidity_lines).reconcile()
+        st_suspense_lines.account_id = bank_liq_line.account_id
+        (st_suspense_lines + bank_liq_line).reconcile()
 
         bank_account_lines = self.env["account.move.line"].search(
             [("account_id", "=", bank_account.id)]
@@ -751,6 +732,7 @@ class TestCurrencyRevaluation(common.TransactionCase):
             }
         )
         eur_bank.default_account_id.currency_revaluation = True
+        eur_bank.default_account_id.reconcile = True
         bank_account = eur_bank.default_account_id
 
         liability_account = self.env["account.account"].create(
@@ -758,7 +740,8 @@ class TestCurrencyRevaluation(common.TransactionCase):
                 "name": "Liability",
                 "code": "L",
                 "account_type": "liability_current",
-                "company_id": self.company.id,
+                "reconcile": True,
+                "company_ids": [Command.set([self.company.id])],
             }
         )
         eur_bank.inbound_payment_method_line_ids.payment_account_id = (
@@ -791,27 +774,24 @@ class TestCurrencyRevaluation(common.TransactionCase):
                 "amount": 100.0,
                 "currency_id": eur_currency.id,
                 "date": self.today - timedelta(days=89),
-                "ref": "Incoming 100 EUR",
+                "memo": "Incoming 100 EUR",
                 "partner_id": self.partner.id,
                 "partner_type": "customer",
                 "journal_id": eur_bank.id,
                 "payment_type": "inbound",
             }
         )
-        (
-            liquidity_lines,
-            counterpart_lines,
-            writeoff_lines,
-        ) = payment_line_1._seek_for_lines()
         payment_line_1.action_post()
-
+        bank_liq_line = payment_line_1.move_id.line_ids.filtered(
+            lambda line: line.account_id == payment_line_1.outstanding_account_id
+        )
         (
             _st_liquidity_lines,
             st_suspense_lines,
             _st_other_lines,
         ) = bank_stmt_line_1._seek_for_lines()
-        st_suspense_lines.account_id = liquidity_lines.account_id
-        (st_suspense_lines + liquidity_lines).reconcile()
+        st_suspense_lines.account_id = bank_liq_line.account_id
+        (st_suspense_lines + bank_liq_line).reconcile()
 
         bank_stmt = self.env["account.bank.statement"].create(
             {
@@ -872,27 +852,24 @@ class TestCurrencyRevaluation(common.TransactionCase):
                 "amount": 50.0,
                 "currency_id": eur_currency.id,
                 "date": self.today - timedelta(days=69),
-                "ref": "Incoming 50 EUR",
+                "memo": "Incoming 50 EUR",
                 "partner_id": self.partner.id,
                 "partner_type": "customer",
                 "journal_id": eur_bank.id,
                 "payment_type": "inbound",
             }
         )
-        (
-            liquidity_lines,
-            counterpart_lines,
-            writeoff_lines,
-        ) = payment_line_3._seek_for_lines()
         payment_line_3.action_post()
-
+        bank_liq_line = payment_line_3.move_id.line_ids.filtered(
+            lambda line: line.account_id == payment_line_3.outstanding_account_id
+        )
         (
             _st_liquidity_lines,
             st_suspense_lines,
             _st_other_lines,
         ) = bank_stmt_line_3._seek_for_lines()
-        st_suspense_lines.account_id = liquidity_lines.account_id
-        (st_suspense_lines + liquidity_lines).reconcile()
+        st_suspense_lines.account_id = bank_liq_line.account_id
+        (st_suspense_lines + bank_liq_line).reconcile()
 
         bank_account_lines = self.env["account.move.line"].search(
             [("account_id", "=", bank_account.id)]
