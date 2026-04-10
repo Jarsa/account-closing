@@ -79,7 +79,7 @@ class WizardCurrencyRevaluation(models.TransientModel):
             return {
                 "domain": [("id", "in", created_entries.ids)],
                 "name": _("Reverse Revaluation Entries"),
-                "view_mode": "tree,form",
+                "view_mode": "list,form",
                 "auto_search": True,
                 "res_model": "account.move",
                 "view_id": False,
@@ -87,4 +87,4 @@ class WizardCurrencyRevaluation(models.TransientModel):
                 "type": "ir.actions.act_window",
             }
         else:
-            raise exceptions.Warning(_("No accounting entry has been posted."))
+            raise exceptions.UserError(_("No accounting entry has been posted."))

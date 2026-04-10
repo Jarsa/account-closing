@@ -21,16 +21,20 @@ class AccountAccount(models.Model):
 
     def init(self):
         # all receivable, payable, Bank and Cash accounts should
-        # have currency_revaluation True by default
+        # have currency_revaluation True by default.
+        # Raw SQL avoids ORM fetching all res_company fields (including ones
+        # from modules being installed in the same batch whose DB columns
+        # don't exist yet).
         res = super().init()
-        accounts = self.env["account.account"].search(
-            [
-                ("account_type", "in", self._get_revaluation_account_types()),
-                ("currency_revaluation", "=", False),
-                ("include_initial_balance", "=", True),
-            ]
+        self.env.cr.execute(
+            """
+            UPDATE account_account
+            SET currency_revaluation = TRUE
+            WHERE account_type IN %s
+            AND (currency_revaluation IS NULL OR currency_revaluation = FALSE)
+            """,
+            (tuple(self._get_revaluation_account_types()),),
         )
-        accounts.write({"currency_revaluation": True})
         return res
 
     def write(self, vals):
@@ -79,7 +83,10 @@ class AccountAccount(models.Model):
             ]
         )
         self.env["account.move.line"]._apply_ir_rules(query)
-        tables, where_clause, where_clause_params = query.get_sql()
+        from_clause_sql = query.from_clause
+        where_clause_sql = query.where_clause
+        tables = from_clause_sql.code
+        where_clause = where_clause_sql.code
         mapping = [
             ('"account_move_line".', "aml."),
             ('"account_move_line"', "account_move_line aml"),
@@ -160,15 +167,16 @@ ORDER BY account_id, partner_id, currency_id"""
         )
 
         params = [
+            *from_clause_sql.params,
             revaluation_date,
             revaluation_date,
             tuple(self.ids),
             revaluation_date,
-            *where_clause_params,
+            *where_clause_sql.params,
         ]
         if start_date:
-            # Insert the value after the revaluation date parameter
-            params.insert(4, start_date)
+            # Insert start_date after the 3 revaluation_date params and account ids
+            params.insert(4 + len(from_clause_sql.params), start_date)
 
         return query, params
 
